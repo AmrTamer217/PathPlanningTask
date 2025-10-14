@@ -65,16 +65,82 @@ class PathPlanning:
 
         return False
 
+    def point_side_of_line(self, point, line_start, line_end) -> float:
+        """
+        Determine which side of a line a point is on using cross product.
+        
+        Args:
+            point: (x, y) coordinates of the point to test
+            line_start: (x, y) coordinates of line start
+            line_end: (x, y) coordinates of line end
+        
+        Returns:
+            > 0: point is on the left of the line
+            < 0: point is on the right of the line
+            = 0: point is on the line
+        """
+        px, py = point
+        x1, y1 = line_start
+        x2, y2 = line_end
+        
+        # Cross product: (line_end - line_start) × (point - line_start)
+        return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+    
+    def is_valid_cone_position(self, point, prev_point, yellow_cones: np.ndarray, blue_cones: np.ndarray) -> bool:
+        """
+        Check if point maintains correct position relative to nearest cones.
+        Yellow (0) should be on right, Blue (1) should be on left.
+        
+        Args:
+            point: Current point to validate
+            prev_point: Previous point (to form direction vector)
+            yellow_cones: Array of yellow cone positions
+            blue_cones: Array of blue cone positions
+        
+        Returns:
+            True if point is correctly positioned relative to cones
+        """
+        # Find nearest yellow cone
+        if len(yellow_cones) > 0:
+            yellow_dists = np.linalg.norm(yellow_cones - np.array(point), axis=1)
+            nearest_yellow = yellow_cones[np.argmin(yellow_dists)]
+            
+            # Yellow cone should be on the RIGHT (negative side)
+            yellow_side = self.point_side_of_line(nearest_yellow, prev_point, point)
+            if yellow_side > 0:  # Yellow is on left - INVALID
+                return False
+        
+        # Find nearest blue cone
+        if len(blue_cones) > 0:
+            blue_dists = np.linalg.norm(blue_cones - np.array(point), axis=1)
+            nearest_blue = blue_cones[np.argmin(blue_dists)]
+            
+            # Blue cone should be on the LEFT (positive side)
+            blue_side = self.point_side_of_line(nearest_blue, prev_point, point)
+            if blue_side < 0:  # Blue is on right - INVALID
+                return False
+        
+        return True
+
     def check_validity(self, A, B):
         for i in self.cones:
             dist = self.point_segment_distance((i.x, i.y), A, B)
-            if dist < 0.15:
+            if dist < 0.3:
                 return False
 
         for j in range(len(self.cones)):
             for k in range(j + 1, len(self.cones)):
                 if self.segments_intersect(A, B, (self.cones[j].x, self.cones[j].y), (self.cones[k].x, self.cones[k].y)) and self.cones[j].color == self.cones[k].color:
                     return False
+        
+        yellow_cones = np.array([[cone.x, cone.y] for cone in self.cones if cone.color == 0])
+        blue_cones = np.array([[cone.x, cone.y] for cone in self.cones if cone.color == 1])
+        
+        if not self.is_valid_cone_position(B, A, yellow_cones, blue_cones):
+            return False
+        
+        
+        
         return True
     
     def shortcut_smooth(self, path):
@@ -93,15 +159,48 @@ class PathPlanning:
             i = j
         return smooth
 
-    def spline_smooth(self, path, num_points=200):
-        """Smooth path with cubic spline interpolation (for visualization)."""
+    def spline_smooth(self, path: Path2D, num_points: int = 200, smoothness: float = 0.2) -> Path2D:
+        """
+        Smooth a path using cubic spline interpolation.
+        
+        Args:
+            path: List of (x, y) coordinate tuples
+            num_points: Number of points in the smoothed path
+            smoothness: Smoothing factor (0 = exact fit, higher = smoother)
+                    Recommended range: 0.0 - 5.0
+        
+        Returns:
+            Smoothed path as list of (x, y) tuples
+        """
+        # Handle edge cases
         if len(path) < 3:
             return path
+        
+        # Separate x and y coordinates
         x, y = zip(*path)
-        tck, _ = splprep([x, y], s=0.2)
-        u_new = np.linspace(0, 1, num_points)
-        x_new, y_new = splev(u_new, tck)
-        return list(zip(x_new, y_new))
+        x, y = np.array(x), np.array(y)
+        
+        # Remove duplicate consecutive points
+        mask = np.ones(len(x), dtype=bool)
+        mask[1:] = (np.diff(x) != 0) | (np.diff(y) != 0)
+        x, y = x[mask], y[mask]
+        
+        if len(x) < 2:
+            return path
+        
+        try:
+            # Fit spline with periodic=False for open paths
+            tck, u = splprep([x, y], s=smoothness, k=min(3, len(x)-1))
+            
+            # Generate new points along the spline
+            u_new = np.linspace(0, 1, num_points)
+            x_new, y_new = splev(u_new, tck)
+            
+            return list(zip(x_new, y_new))
+        
+        except Exception as e:
+            print(f"Spline smoothing failed: {e}. Returning original path.")
+            return path
     
     def dijkstra(self, start = (0, 0), goal=(5, 5), step=0.2, max_step=0.5):
         path: Path2D = []
@@ -168,5 +267,5 @@ class PathPlanning:
         """
         path: Path2D = self.dijkstra(start=(self.car_pose.x, self.car_pose.y), goal=(5, 5), step=0.2, max_step=0.5)
         path = self.shortcut_smooth(path)
-        path = self.spline_smooth(path, num_points=200)
+        #path = self.spline_smooth(path, num_points=200, smoothness=0.1)
         return path
