@@ -5,6 +5,8 @@ from typing import List
 from src.models import CarPose, Cone, Path2D
 
 import numpy as np
+import heapq
+import math
 
 class PathPlanning:
     """Student-implemented path planner.
@@ -20,44 +22,49 @@ class PathPlanning:
         self.car_pose = car_pose
         self.cones = cones
 
-    def point_segment_distance(P, A, B):
+    def point_segment_distance(self, P, A, B):
         P, A, B = np.array(P), np.array(A), np.array(B)
         AB = B - A
         AP = P - A
-        t = np.dot(AP, AB) / np.dot(AB, AB)
-        t = np.clip(t, 0, 1)  # clamp to [0,1]
+        denom = np.dot(AB, AB)
+
+        if denom == 0:  # A and B are the same point
+            return np.linalg.norm(P - A)
+
+        t = np.dot(AP, AB) / denom
+        t = np.clip(t, 0, 1)
         C = A + t * AB
         return np.linalg.norm(P - C)
     
-    def on_segment(p, q, r):
+    def on_segment(self, p, q, r):
         return (min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and
                 min(p[1], r[1]) <= q[1] <= max(p[1], r[1]))
 
-    def orientation(p, q, r):
+    def orientation(self, p, q, r):
         val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
         if val == 0:
             return 0  # collinear
         return 1 if val > 0 else 2  # 1 = clockwise, 2 = counterclockwise
 
-    def segments_intersect(A, B, C, D):
-        o1 = orientation(A, B, C)
-        o2 = orientation(A, B, D)
-        o3 = orientation(C, D, A)
-        o4 = orientation(C, D, B)
+    def segments_intersect(self, A, B, C, D):
+        o1 = self.orientation(A, B, C)
+        o2 = self.orientation(A, B, D)
+        o3 = self.orientation(C, D, A)
+        o4 = self.orientation(C, D, B)
 
         # General case
         if o1 != o2 and o3 != o4:
             return True
 
         # Special collinear cases
-        if o1 == 0 and on_segment(A, C, B): return True
-        if o2 == 0 and on_segment(A, D, B): return True
-        if o3 == 0 and on_segment(C, A, D): return True
-        if o4 == 0 and on_segment(C, B, D): return True
+        if o1 == 0 and self.on_segment(A, C, B): return True
+        if o2 == 0 and self.on_segment(A, D, B): return True
+        if o3 == 0 and self.on_segment(C, A, D): return True
+        if o4 == 0 and self.on_segment(C, B, D): return True
 
         return False
 
-    def check_validity(A, B):
+    def check_validity(self, A, B):
         for i in self.cones:
             dist = self.point_segment_distance((i.x, i.y), A, B)
             if dist < 0.15:
@@ -84,19 +91,54 @@ class PathPlanning:
 
         Replace the placeholder implementation below with your algorithm.
         """
-
-        # Default: produce a short straight-ahead path from the current pose.
-        # delete/replace this with your own algorithm.
-        num_points = 25
-        step = 0.5
-        cx = self.car_pose.x
-        cy = self.car_pose.y
-        import math
+        start=(self.car_pose.x, self.car_pose.y)
+        goal=(5, 5)
+        step=0.35
+        max_step=0.5
 
         path: Path2D = []
-        for i in range(1, num_points + 1):
-            dx = math.cos(self.car_pose.yaw) * step * i
-            dy = math.sin(self.car_pose.yaw) * step * i
-            path.append((cx + dx, cy + dy))
+        
+        def round_point(p):
+            return (round(p[0], 1), round(p[1], 1))
+
+        pq = [(0, start)]
+        visited = {}
+        parent = {}
+
+        while pq:
+            cost, current = heapq.heappop(pq)
+            if current in visited and visited[current] <= cost:
+                continue
+            visited[current] = cost
+
+            if math.dist(current, goal) <= step and self.check_validity(current, goal) == True:
+                parent[goal] = current
+                break
+
+            # generate neighbors
+            for dx in np.arange(-max_step, max_step + step, step):
+                for dy in np.arange(-max_step, max_step + step, step):
+                    if dx == 0 and dy == 0:
+                        continue
+                    new_point = (current[0] + dx, current[1] + dy)
+                    if math.dist(current, new_point) > max_step:
+                        continue
+
+                    new_point = round_point(new_point)
+                    if not self.check_validity(current, new_point):
+                        continue
+
+                    new_cost = cost + math.dist(current, new_point)
+                    if new_point not in visited or new_cost < visited[new_point]:
+                        parent[new_point] = current
+                        heapq.heappush(pq, (new_cost, new_point))
+
+        path = [goal]
+        while path[-1] != start:
+            if path[-1] not in parent:
+                print("Broken path reconstruction!")
+                return []
+            path.append(parent[path[-1]])
+        path.reverse()
 
         return path
