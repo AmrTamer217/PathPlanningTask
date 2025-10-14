@@ -4,6 +4,7 @@ from typing import List
 
 from src.models import CarPose, Cone, Path2D
 
+import numpy as np
 
 class PathPlanning:
     """Student-implemented path planner.
@@ -18,6 +19,55 @@ class PathPlanning:
     def __init__(self, car_pose: CarPose, cones: List[Cone]):
         self.car_pose = car_pose
         self.cones = cones
+
+    def point_segment_distance(P, A, B):
+        P, A, B = np.array(P), np.array(A), np.array(B)
+        AB = B - A
+        AP = P - A
+        t = np.dot(AP, AB) / np.dot(AB, AB)
+        t = np.clip(t, 0, 1)  # clamp to [0,1]
+        C = A + t * AB
+        return np.linalg.norm(P - C)
+    
+    def on_segment(p, q, r):
+        return (min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and
+                min(p[1], r[1]) <= q[1] <= max(p[1], r[1]))
+
+    def orientation(p, q, r):
+        val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+        if val == 0:
+            return 0  # collinear
+        return 1 if val > 0 else 2  # 1 = clockwise, 2 = counterclockwise
+
+    def segments_intersect(A, B, C, D):
+        o1 = orientation(A, B, C)
+        o2 = orientation(A, B, D)
+        o3 = orientation(C, D, A)
+        o4 = orientation(C, D, B)
+
+        # General case
+        if o1 != o2 and o3 != o4:
+            return True
+
+        # Special collinear cases
+        if o1 == 0 and on_segment(A, C, B): return True
+        if o2 == 0 and on_segment(A, D, B): return True
+        if o3 == 0 and on_segment(C, A, D): return True
+        if o4 == 0 and on_segment(C, B, D): return True
+
+        return False
+
+    def check_validity(A, B):
+        for i in self.cones:
+            dist = self.point_segment_distance((i.x, i.y), A, B)
+            if dist < 0.15:
+                return False
+
+        for j in range(len(self.cones)):
+            for k in range(j + 1, len(self.cones)):
+                if self.segments_intersect(A, B, (self.cones[j].x, self.cones[j].y), (self.cones[k].x, self.cones[k].y)) and self.cones[j].color == self.cones[k].color:
+                    return False
+        return True
 
     def generatePath(self) -> Path2D:
         """Return a list of path points (x, y) in world frame.
