@@ -7,6 +7,7 @@ from src.models import CarPose, Cone, Path2D
 import numpy as np
 import heapq
 import math
+from scipy.interpolate import splprep, splev
 
 class PathPlanning:
     """Student-implemented path planner.
@@ -75,27 +76,34 @@ class PathPlanning:
                 if self.segments_intersect(A, B, (self.cones[j].x, self.cones[j].y), (self.cones[k].x, self.cones[k].y)) and self.cones[j].color == self.cones[k].color:
                     return False
         return True
+    
+    def shortcut_smooth(self, path):
+        """Remove unnecessary waypoints by checking direct valid shortcuts."""
+        if not path:
+            return []
+        smooth = [path[0]]
+        i = 0
+        while i < len(path) - 1:
+            j = len(path) - 1
+            while j > i + 1:
+                if self.check_validity(path[i], path[j]):
+                    break
+                j -= 1
+            smooth.append(path[j])
+            i = j
+        return smooth
 
-    def generatePath(self) -> Path2D:
-        """Return a list of path points (x, y) in world frame.
-
-        Requirements and notes:
-        - Cones: color==0 (yellow) are on the RIGHT of the track; color==1 (blue) are on the LEFT.
-        - You may be given 2, 1, or 0 cones on each side.
-        - Use the car pose (x, y, yaw) to seed your path direction if needed.
-        - Return a drivable path that stays between left (blue) and right (yellow) cones.
-        - The returned path will be visualized by PathTester.
-
-        The path can contain as many points as you like, but it should be between 5-10 meters,
-        with a step size <= 0.5. Units are meters.
-
-        Replace the placeholder implementation below with your algorithm.
-        """
-        start=(self.car_pose.x, self.car_pose.y)
-        goal=(5, 5)
-        step=0.35
-        max_step=0.5
-
+    def spline_smooth(self, path, num_points=200):
+        """Smooth path with cubic spline interpolation (for visualization)."""
+        if len(path) < 3:
+            return path
+        x, y = zip(*path)
+        tck, _ = splprep([x, y], s=0.2)
+        u_new = np.linspace(0, 1, num_points)
+        x_new, y_new = splev(u_new, tck)
+        return list(zip(x_new, y_new))
+    
+    def dijkstra(self, start = (0, 0), goal=(5, 5), step=0.2, max_step=0.5):
         path: Path2D = []
         
         def round_point(p):
@@ -141,4 +149,24 @@ class PathPlanning:
             path.append(parent[path[-1]])
         path.reverse()
 
+        return path
+
+    def generatePath(self) -> Path2D:
+        """Return a list of path points (x, y) in world frame.
+
+        Requirements and notes:
+        - Cones: color==0 (yellow) are on the RIGHT of the track; color==1 (blue) are on the LEFT.
+        - You may be given 2, 1, or 0 cones on each side.
+        - Use the car pose (x, y, yaw) to seed your path direction if needed.
+        - Return a drivable path that stays between left (blue) and right (yellow) cones.
+        - The returned path will be visualized by PathTester.
+
+        The path can contain as many points as you like, but it should be between 5-10 meters,
+        with a step size <= 0.5. Units are meters.
+
+        Replace the placeholder implementation below with your algorithm.
+        """
+        path: Path2D = self.dijkstra(start=(self.car_pose.x, self.car_pose.y), goal=(5, 5), step=0.2, max_step=0.5)
+        path = self.shortcut_smooth(path)
+        path = self.spline_smooth(path, num_points=200)
         return path
