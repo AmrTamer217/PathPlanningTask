@@ -8,6 +8,8 @@ import numpy as np
 import heapq
 import math
 from scipy.interpolate import splprep, splev
+from typing import Tuple, List, Dict, Optional
+from queue import Queue
 
 class PathPlanning:
     """Student-implemented path planner.
@@ -101,7 +103,38 @@ class PathPlanning:
             True if point is correctly positioned relative to cones
         """
         # Find nearest yellow cone
-        if len(yellow_cones) > 0:
+        if len(yellow_cones) > 0 and len(blue_cones) > 0:
+            yellow_dists = np.linalg.norm(yellow_cones - np.array(point), axis=1)
+            nearest_yellow = yellow_cones[np.argmin(yellow_dists)]
+            blue_dists = np.linalg.norm(blue_cones - np.array(point), axis=1)
+            nearest_blue = blue_cones[np.argmin(blue_dists)]
+            
+            yellow_side = self.point_side_of_line(nearest_yellow, prev_point, point)
+            blue_side = self.point_side_of_line(nearest_blue, prev_point, point)
+
+            if point == (9, 12) and prev_point == (7, 10):
+                print("Debugging at point (9,12):")
+                print(f"Nearest Yellow: {nearest_yellow}, Side: {yellow_side}")
+                print(f"Nearest Blue: {nearest_blue}, Side: {blue_side}")
+
+            if (yellow_side < 0 and blue_side < 0) or (yellow_side > 0 and blue_side > 0):  
+                if self.point_segment_distance(nearest_blue, point, prev_point) < self.point_segment_distance(nearest_yellow, point, prev_point):
+                    if blue_side < 0:  # Blue on right - INVALID
+                        return False
+                else:
+                    if yellow_side > 0:  # Yellow on left - INVALID
+                        return False
+            elif yellow_side > 0 and blue_side < 0:  # Yellow on left and Blue on right - INVALID
+                return False
+        elif len(blue_cones) > 0:
+            blue_dists = np.linalg.norm(blue_cones - np.array(point), axis=1)
+            nearest_blue = blue_cones[np.argmin(blue_dists)]
+            
+            # Blue cone should be on the LEFT (positive side)
+            blue_side = self.point_side_of_line(nearest_blue, prev_point, point)
+            if blue_side < 0:  # Blue is on right - INVALID
+                return False
+        elif len(yellow_cones) > 0:
             yellow_dists = np.linalg.norm(yellow_cones - np.array(point), axis=1)
             nearest_yellow = yellow_cones[np.argmin(yellow_dists)]
             
@@ -110,36 +143,24 @@ class PathPlanning:
             if yellow_side > 0:  # Yellow is on left - INVALID
                 return False
         
-        # Find nearest blue cone
-        if len(blue_cones) > 0:
-            blue_dists = np.linalg.norm(blue_cones - np.array(point), axis=1)
-            nearest_blue = blue_cones[np.argmin(blue_dists)]
-            
-            # Blue cone should be on the LEFT (positive side)
-            blue_side = self.point_side_of_line(nearest_blue, prev_point, point)
-            if blue_side < 0:  # Blue is on right - INVALID
-                return False
-        
         return True
 
     def check_validity(self, A, B):
         for i in self.cones:
-            dist = self.point_segment_distance((i.x, i.y), A, B)
-            if dist < 0.3:
+            dist = self.point_segment_distance((i.x * 10, i.y * 10), A, B)
+            if dist < 3:
                 return False
 
         for j in range(len(self.cones)):
             for k in range(j + 1, len(self.cones)):
-                if self.segments_intersect(A, B, (self.cones[j].x, self.cones[j].y), (self.cones[k].x, self.cones[k].y)) and self.cones[j].color == self.cones[k].color:
+                if self.segments_intersect(A, B, (self.cones[j].x * 10, self.cones[j].y * 10), (self.cones[k].x * 10, self.cones[k].y * 10)) and self.cones[j].color == self.cones[k].color:
                     return False
         
-        yellow_cones = np.array([[cone.x, cone.y] for cone in self.cones if cone.color == 0])
-        blue_cones = np.array([[cone.x, cone.y] for cone in self.cones if cone.color == 1])
+        yellow_cones = np.array([[cone.x * 10, cone.y * 10] for cone in self.cones if cone.color == 0])
+        blue_cones = np.array([[cone.x * 10, cone.y * 10] for cone in self.cones if cone.color == 1])
         
         if not self.is_valid_cone_position(B, A, yellow_cones, blue_cones):
-            return False
-        
-        
+           return False
         
         return True
     
@@ -150,7 +171,7 @@ class PathPlanning:
         smooth = [path[0]]
         i = 0
         while i < len(path) - 1:
-            j = len(path) - 1
+            j = min(len(path) - 1, i + 5)
             while j > i + 1:
                 if self.check_validity(path[i], path[j]):
                     break
@@ -201,12 +222,9 @@ class PathPlanning:
         except Exception as e:
             print(f"Spline smoothing failed: {e}. Returning original path.")
             return path
-    
-    def dijkstra(self, start = (0, 0), goal=(5, 5), step=0.2, max_step=0.5):
-        path: Path2D = []
         
-        def round_point(p):
-            return (round(p[0], 1), round(p[1], 1))
+    def dijkstra(self, start = (0, 0), goal=(50, 50), min_step=1, max_step=3):
+        path: Path2D = []
 
         pq = [(0, start)]
         visited = {}
@@ -214,34 +232,38 @@ class PathPlanning:
 
         while pq:
             cost, current = heapq.heappop(pq)
-            if current in visited and visited[current] <= cost:
+            if current in visited and visited[current] < cost:
                 continue
-            visited[current] = cost
+            #print("working...")
+            #print(current, parent)
 
-            if math.dist(current, goal) <= step and self.check_validity(current, goal) == True:
-                parent[goal] = current
+            if math.dist(current, goal) <= 2 and self.check_validity(current, goal) == True:
+                if goal != current: 
+                    parent[goal] = current
                 break
 
             # generate neighbors
-            for dx in np.arange(-max_step, max_step + step, step):
-                for dy in np.arange(-max_step, max_step + step, step):
-                    if dx == 0 and dy == 0:
+            for dx in np.arange(-max_step, max_step + min_step, min_step):
+                for dy in np.arange(-max_step, max_step + min_step, min_step):
+                    if (dx == 0 and dy == 0) or math.dist((0, 0), (dx, dy)) >= max_step:
                         continue
                     new_point = (current[0] + dx, current[1] + dy)
-                    if math.dist(current, new_point) > max_step:
+                    if(new_point[0] <= -5 or new_point[0] >= 55 or new_point[1] <= -5 or new_point[1] >= 55):
                         continue
 
-                    new_point = round_point(new_point)
                     if not self.check_validity(current, new_point):
                         continue
 
                     new_cost = cost + math.dist(current, new_point)
-                    if new_point not in visited or new_cost < visited[new_point]:
+                    if (new_point not in visited) or new_cost < visited[new_point]:
                         parent[new_point] = current
+                        visited[new_point] = new_cost
                         heapq.heappush(pq, (new_cost, new_point))
 
         path = [goal]
         while path[-1] != start:
+            print("reconstructing...")
+            print(path[-1])
             if path[-1] not in parent:
                 print("Broken path reconstruction!")
                 return []
@@ -265,7 +287,11 @@ class PathPlanning:
 
         Replace the placeholder implementation below with your algorithm.
         """
-        path: Path2D = self.dijkstra(start=(self.car_pose.x, self.car_pose.y), goal=(5, 5), step=0.2, max_step=0.5)
-        path = self.shortcut_smooth(path)
+        path: Path2D = self.dijkstra(start=(0, 0), goal=(50, 50))
+        #path = self.shortcut_smooth(path)
+        #for i in range(len(path)):
+         #   print(path[i])
         #path = self.spline_smooth(path, num_points=200, smoothness=0.1)
+        for i in range(len(path)):
+            path[i] = (path[i][0] / 10, path[i][1] / 10)
         return path
