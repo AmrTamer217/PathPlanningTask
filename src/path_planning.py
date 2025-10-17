@@ -39,54 +39,38 @@ class PathPlanning:
         C = A + t * AB
         return np.linalg.norm(P - C)
     
-    def on_segment(self, p, q, r):
-        return (min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and
-                min(p[1], r[1]) <= q[1] <= max(p[1], r[1]))
-
-    def orientation(self, p, q, r):
-        val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
-        if val == 0:
-            return 0  # collinear
-        return 1 if val > 0 else 2  # 1 = clockwise, 2 = counterclockwise
 
     def segments_intersect(self, A, B, C, D):
-        o1 = self.orientation(A, B, C)
-        o2 = self.orientation(A, B, D)
-        o3 = self.orientation(C, D, A)
-        o4 = self.orientation(C, D, B)
+        def on_segment(p, q, r):
+            return (min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and
+                    min(p[1], r[1]) <= q[1] <= max(p[1], r[1]))
+
+        def orientation(p, q, r):
+            val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+            if val == 0:
+                return 0  # collinear
+            return 1 if val > 0 else 2  # 1 = clockwise, 2 = counterclockwise
+        
+        o1 = orientation(A, B, C)
+        o2 = orientation(A, B, D)
+        o3 = orientation(C, D, A)
+        o4 = orientation(C, D, B)
 
         # General case
         if o1 != o2 and o3 != o4:
             return True
 
         # Special collinear cases
-        if o1 == 0 and self.on_segment(A, C, B): return True
-        if o2 == 0 and self.on_segment(A, D, B): return True
-        if o3 == 0 and self.on_segment(C, A, D): return True
-        if o4 == 0 and self.on_segment(C, B, D): return True
+        if o1 == 0 and on_segment(A, C, B): 
+            return True
+        if o2 == 0 and on_segment(A, D, B): 
+            return True
+        if o3 == 0 and on_segment(C, A, D): 
+            return True
+        if o4 == 0 and on_segment(C, B, D): 
+            return True
 
         return False
-
-    def point_side_of_line(self, point, line_start, line_end) -> float:
-        """
-        Determine which side of a line a point is on using cross product.
-        
-        Args:
-            point: (x, y) coordinates of the point to test
-            line_start: (x, y) coordinates of line start
-            line_end: (x, y) coordinates of line end
-        
-        Returns:
-            > 0: point is on the left of the line
-            < 0: point is on the right of the line
-            = 0: point is on the line
-        """
-        px, py = point
-        x1, y1 = line_start
-        x2, y2 = line_end
-        
-        # Cross product: (line_end - line_start) × (point - line_start)
-        return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
     
     def is_valid_cone_position(self, point, prev_point, yellow_cones: np.ndarray, blue_cones: np.ndarray) -> bool:
         """
@@ -102,6 +86,15 @@ class PathPlanning:
         Returns:
             True if point is correctly positioned relative to cones
         """
+
+        def point_side_of_line(point, line_start, line_end) -> float:
+            px, py = point
+            x1, y1 = line_start
+            x2, y2 = line_end
+            
+            # Cross product: (line_end - line_start) × (point - line_start)
+            return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+
         # Find nearest yellow cone
         if len(yellow_cones) > 0 and len(blue_cones) > 0:
             yellow_dists = np.linalg.norm(yellow_cones - np.array(point), axis=1)
@@ -109,13 +102,8 @@ class PathPlanning:
             blue_dists = np.linalg.norm(blue_cones - np.array(point), axis=1)
             nearest_blue = blue_cones[np.argmin(blue_dists)]
             
-            yellow_side = self.point_side_of_line(nearest_yellow, prev_point, point)
-            blue_side = self.point_side_of_line(nearest_blue, prev_point, point)
-
-            if point == (9, 12) and prev_point == (7, 10):
-                print("Debugging at point (9,12):")
-                print(f"Nearest Yellow: {nearest_yellow}, Side: {yellow_side}")
-                print(f"Nearest Blue: {nearest_blue}, Side: {blue_side}")
+            yellow_side = point_side_of_line(nearest_yellow, prev_point, point)
+            blue_side = point_side_of_line(nearest_blue, prev_point, point)
 
             if (yellow_side < 0 and blue_side < 0) or (yellow_side > 0 and blue_side > 0):  
                 if self.point_segment_distance(nearest_blue, point, prev_point) < self.point_segment_distance(nearest_yellow, point, prev_point):
@@ -131,7 +119,7 @@ class PathPlanning:
             nearest_blue = blue_cones[np.argmin(blue_dists)]
             
             # Blue cone should be on the LEFT (positive side)
-            blue_side = self.point_side_of_line(nearest_blue, prev_point, point)
+            blue_side = point_side_of_line(nearest_blue, prev_point, point)
             if blue_side < 0:  # Blue is on right - INVALID
                 return False
         elif len(yellow_cones) > 0:
@@ -139,7 +127,7 @@ class PathPlanning:
             nearest_yellow = yellow_cones[np.argmin(yellow_dists)]
             
             # Yellow cone should be on the RIGHT (negative side)
-            yellow_side = self.point_side_of_line(nearest_yellow, prev_point, point)
+            yellow_side = point_side_of_line(nearest_yellow, prev_point, point)
             if yellow_side > 0:  # Yellow is on left - INVALID
                 return False
         
@@ -148,7 +136,7 @@ class PathPlanning:
     def check_validity(self, A, B):
         for i in self.cones:
             dist = self.point_segment_distance((i.x * 10, i.y * 10), A, B)
-            if dist < 3:
+            if dist < 2:
                 return False
 
         for j in range(len(self.cones)):
@@ -164,66 +152,7 @@ class PathPlanning:
         
         return True
     
-    def shortcut_smooth(self, path):
-        """Remove unnecessary waypoints by checking direct valid shortcuts."""
-        if not path:
-            return []
-        smooth = [path[0]]
-        i = 0
-        while i < len(path) - 1:
-            j = min(len(path) - 1, i + 5)
-            while j > i + 1:
-                if self.check_validity(path[i], path[j]):
-                    break
-                j -= 1
-            smooth.append(path[j])
-            i = j
-        return smooth
-
-    def spline_smooth(self, path: Path2D, num_points: int = 200, smoothness: float = 0.2) -> Path2D:
-        """
-        Smooth a path using cubic spline interpolation.
-        
-        Args:
-            path: List of (x, y) coordinate tuples
-            num_points: Number of points in the smoothed path
-            smoothness: Smoothing factor (0 = exact fit, higher = smoother)
-                    Recommended range: 0.0 - 5.0
-        
-        Returns:
-            Smoothed path as list of (x, y) tuples
-        """
-        # Handle edge cases
-        if len(path) < 3:
-            return path
-        
-        # Separate x and y coordinates
-        x, y = zip(*path)
-        x, y = np.array(x), np.array(y)
-        
-        # Remove duplicate consecutive points
-        mask = np.ones(len(x), dtype=bool)
-        mask[1:] = (np.diff(x) != 0) | (np.diff(y) != 0)
-        x, y = x[mask], y[mask]
-        
-        if len(x) < 2:
-            return path
-        
-        try:
-            # Fit spline with periodic=False for open paths
-            tck, u = splprep([x, y], s=smoothness, k=min(3, len(x)-1))
-            
-            # Generate new points along the spline
-            u_new = np.linspace(0, 1, num_points)
-            x_new, y_new = splev(u_new, tck)
-            
-            return list(zip(x_new, y_new))
-        
-        except Exception as e:
-            print(f"Spline smoothing failed: {e}. Returning original path.")
-            return path
-        
-    def dijkstra(self, start = (0, 0), goal=(50, 50), min_step=1, max_step=3):
+    def dijkstra(self, start = (0, 0), goal=(50, 50), min_step=1, max_step=5):
         path: Path2D = []
 
         pq = [(0, start)]
@@ -234,8 +163,6 @@ class PathPlanning:
             cost, current = heapq.heappop(pq)
             if current in visited and visited[current] < cost:
                 continue
-            #print("working...")
-            #print(current, parent)
 
             if math.dist(current, goal) <= 2 and self.check_validity(current, goal) == True:
                 if goal != current: 
@@ -288,10 +215,6 @@ class PathPlanning:
         Replace the placeholder implementation below with your algorithm.
         """
         path: Path2D = self.dijkstra(start=(0, 0), goal=(50, 50))
-        #path = self.shortcut_smooth(path)
-        #for i in range(len(path)):
-         #   print(path[i])
-        #path = self.spline_smooth(path, num_points=200, smoothness=0.1)
         for i in range(len(path)):
             path[i] = (path[i][0] / 10, path[i][1] / 10)
         return path
